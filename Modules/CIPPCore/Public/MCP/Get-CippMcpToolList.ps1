@@ -31,6 +31,8 @@ function Get-CippMcpToolList {
     # Unfiltered catalog: the core passthroughs are always available regardless of connector scoping.
     $Catalog = @(Get-CippMcpToolCatalog)
     $FilteredCount = @(Get-CippMcpToolCatalog -Request $Request | Group-Object -Property { $_.name }).Count
+    $WriteMode = Get-CippMcpWriteMode -Request $Request
+    $Kind = switch ($WriteMode) { 'only' { 'write' } 'on' { 'read and write' } default { 'read-only' } }
 
     $Tools = [System.Collections.Generic.List[object]]::new()
 
@@ -52,7 +54,7 @@ function Get-CippMcpToolList {
 
     $Tools.Add([ordered]@{
             name        = 'SearchTools'
-            description = "Search and browse the catalog of $FilteredCount read-only CIPP tools. Call with no arguments for a category overview, with category to list a category's tools, or with query keywords for a ranked search. Results are compact (name, category, one-line summary). Follow up with GetToolInfo for a tool's input schema, then ExecTool to run it."
+            description = "Search and browse the catalog of $FilteredCount $Kind CIPP tools. Call with no arguments for a category overview, with category to list a category's tools, or with query keywords for a ranked search. Results are compact (name, category, one-line summary). Follow up with GetToolInfo for a tool's input schema, then ExecTool to run it."
             inputSchema = [ordered]@{
                 type       = 'object'
                 properties = [ordered]@{
@@ -79,7 +81,7 @@ function Get-CippMcpToolList {
 
     $Tools.Add([ordered]@{
             name        = 'ExecTool'
-            description = 'Execute any read-only CIPP tool by name. Discover tools with SearchTools and fetch their input schema with GetToolInfo first; RBAC and tenant scoping are enforced server-side on every call.'
+            description = "Execute any $Kind CIPP tool by name.$(if ($WriteMode -ne 'off') { ' Write tools change tenant data: check the schema, confirm the target tenant and the exact change, and run one at a time.' }) Discover tools with SearchTools and fetch their input schema with GetToolInfo first; RBAC and tenant scoping are enforced server-side on every call."
             inputSchema = [ordered]@{
                 type       = 'object'
                 properties = [ordered]@{
@@ -88,7 +90,7 @@ function Get-CippMcpToolList {
                 }
                 required   = @('name')
             }
-            annotations = [ordered]@{ title = 'ExecTool'; readOnlyHint = $true }
+            annotations = if ($WriteMode -eq 'off') { [ordered]@{ title = 'ExecTool'; readOnlyHint = $true } } else { [ordered]@{ title = 'ExecTool'; readOnlyHint = $false; destructiveHint = $true } }
         })
 
     $Tools.Add([ordered]@{

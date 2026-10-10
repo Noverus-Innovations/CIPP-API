@@ -3,7 +3,7 @@ function Get-CippMcpToolResult {
     .SYNOPSIS
         Dispatches a single MCP 'tools/call' through the five-tool gateway.
     .DESCRIPTION
-        SearchTools and GetToolInfo are answered locally from the read-only tool catalog, and
+        SearchTools and GetToolInfo are answered locally from the tool catalog (read-only unless the connection opted in to writes), and
         SearchDocs / GetDoc from the documentation index shipped in the image.
         ListTenants, ListGraphRequest and ExecTool targets are re-dispatched through
         New-CippCoreRequest via Invoke-CippMcpApiRequest, so RBAC and tenant scoping are enforced
@@ -117,7 +117,7 @@ function Get-CippMcpToolResult {
                 $Near = @((Find-CippMcpTool -Request $Request -Query $TargetName -Limit 5).tools | ForEach-Object { $_.name })
                 $Hint = if ($Near.Count -gt 0) { " Did you mean: $($Near -join ', ')?" } else { ' Use SearchTools to discover valid tool names.' }
                 return [ordered]@{
-                    content = @(@{ type = 'text'; text = "No read-only tool named '$TargetName'.$Hint" })
+                    content = @(@{ type = 'text'; text = "No $(if ((Get-CippMcpWriteMode -Request $Request) -eq 'off') { 'read-only ' })tool named '$TargetName' on this connection.$Hint" })
                     isError = $true
                 }
             }

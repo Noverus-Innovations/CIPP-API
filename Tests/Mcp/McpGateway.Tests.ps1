@@ -15,7 +15,7 @@ BeforeAll {
     $BackendRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
     $McpRoot = Join-Path $BackendRoot 'Modules/CIPPCore/Public/MCP'
     foreach ($Leaf in 'Resolve-CippMcpRef.ps1', 'Resolve-CippMcpNode.ps1', 'Get-CippMcpDescription.ps1',
-        'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpToolCatalog.ps1', 'Get-CippMcpToolList.ps1',
+        'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpWriteMode.ps1', 'Get-CippMcpToolCatalog.ps1', 'Get-CippMcpToolList.ps1',
         'ConvertTo-CippMcpHashtable.ps1', 'Find-CippMcpTool.ps1', 'Invoke-CippMcpApiRequest.ps1') {
         . (Join-Path $McpRoot $Leaf)
     }
@@ -175,5 +175,32 @@ Describe 'dispatch restores the real parameter name' {
         Invoke-CippMcpApiRequest -Request ([pscustomobject]@{ Headers = @{} }) -ToolName 'ListThing' `
             -Arguments @{ tenantFilter = 'contoso.com' } -Method 'GET' -ParamAlias @{} | Out-Null
         $script:Captured.Query['tenantFilter'] | Should -Be 'contoso.com'
+    }
+}
+
+
+Describe 'gateway in write mode' {
+    BeforeAll {
+        function Get-ListNames { param([hashtable]$Query = @{})
+            $Req = [pscustomobject]@{ Query = $Query }
+            return @((Get-CippMcpToolList -Request $Req) | ForEach-Object { $_ })
+        }
+    }
+    AfterEach { $env:CIPP_MCP_ALLOW_WRITE = $null }
+
+    It 'describes ExecTool as read-only by default and as not read-only when writes are on' {
+        Initialize-FixtureSpec -Paths @{
+            '/api/ListTenants' = @{ get = (New-ParamOperation -Names 'x') }
+            '/api/ExecThing'   = @{ post = ([ordered]@{ 'x-cipp-role' = 'CIPP.Core.ReadWrite'; tags = @('CIPP > Core'); description = 'Changes a thing.'; responses = @{ '200' = @{ description = 'ok' } } }) }
+        }
+        $Off = Get-ListNames | Where-Object name -eq 'ExecTool'
+        $Off.annotations.readOnlyHint | Should -BeTrue
+        $Off.description | Should -Match 'read-only'
+
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        $script:CippMcpToolCatalogCache = $null
+        $On = Get-ListNames -Query @{ write = 'true' } | Where-Object name -eq 'ExecTool'
+        $On.annotations.readOnlyHint | Should -BeFalse
+        $On.description | Should -Match 'read and write'
     }
 }

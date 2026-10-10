@@ -1,10 +1,13 @@
 function Get-CippMcpToolCatalog {
     <#
     .SYNOPSIS
-        Projects the CIPP OpenAPI spec into the full read-only tool catalog, with optional per-connection filtering.
+        Projects the CIPP OpenAPI spec into the tool catalog (read-only by default), with optional per-connection filtering.
     .DESCRIPTION
-        Returns every operation whose x-cipp-role ends in '.Read' (never '.ReadWrite') as a catalog
-        entry: name (the API endpoint), description, inputSchema (JSON Schema built from the
+        Returns every operation whose x-cipp-role ends in '.Read' as a catalog entry. Write operations
+        ('.ReadWrite' roles, and endpoints whose name implies a mutation) are projected too but marked
+        _write = $true and hidden unless the connection opts in (see Get-CippMcpWriteMode: the deployment
+        must set CIPP_MCP_ALLOW_WRITE=true AND the connector URL must carry ?write=true or ?write=only).
+        Each entry: name (the API endpoint), description, inputSchema (JSON Schema built from the
         operation's query parameters / request body with $ref inlined), read-only annotations, and
         internal routing fields (_category, _method, _summary). The projection is cached per worker;
         pass -Force to rebuild.
@@ -18,6 +21,8 @@ function Get-CippMcpToolCatalog {
           ?tags=Identity,Exchange     only tools in those top-level CIPP categories (the OpenAPI tag)
           ?tools=ListUsers,ListGroups explicit allow-list of tool names
           ?first=70 / ?limit=70       cap the catalog size
+          ?write=true                 read AND write tools (needs CIPP_MCP_ALLOW_WRITE=true on the deployment)
+          ?write=only                 write tools only (same requirement)
     .FUNCTIONALITY
         Internal
     #>
@@ -53,12 +58,14 @@ function Get-CippMcpToolCatalog {
                 $Op = $MethodEntry.Value
                 $Role = $Op['x-cipp-role']
 
-                # Read-only surface only.
-                if (-not $Role -or $Role -notmatch '\.Read$') { continue }
+                # Read and read/write operations only; any other role is not part of the MCP surface.
+                if (-not $Role -or $Role -notmatch '\.(Read|ReadWrite)$') { continue }
 
-                # Defensive backstop: never expose an endpoint whose name implies a mutation,
-                # even if its x-cipp-role is mislabeled '.Read' (e.g. AddTestReport, EditIntunePolicy).
-                if ($Endpoint -match '^(Add|Set|Remove|Delete|Edit|New|Update|Disable|Enable|Reset|Revoke|Push|Clear|Start|Stop|Rename|Move|Copy)') { continue }
+                # A tool is a write tool when its role is '.ReadWrite', or when its name implies a mutation even if
+                # its x-cipp-role is mislabeled '.Read' (e.g. AddTestReport, EditIntunePolicy). Write tools stay in
+                # the cached projection but are only returned to a connection that opted in (below).
+                $IsWrite = ($Role -match '\.ReadWrite$') -or ($Endpoint -match '^(Add|Set|Remove|Delete|Edit|New|Update|Disable|Enable|Reset|Revoke|Push|Clear|Start|Stop|Rename|Move|Copy)')
+                $IsDestructive = $IsWrite -and ($Endpoint -match '^(Remove|Delete|Reset|Revoke|Clear|Disable|Stop)')
 
                 $Properties = [ordered]@{}
                 $RequiredList = [System.Collections.Generic.List[string]]::new()
@@ -156,7 +163,8 @@ function Get-CippMcpToolCatalog {
                         name        = $Endpoint
                         description = $Description
                         inputSchema = $InputSchema
-                        annotations = [ordered]@{ title = $Endpoint; readOnlyHint = $true }
+                        annotations = if ($IsWrite) { [ordered]@{ title = $Endpoint; readOnlyHint = $false; destructiveHint = [bool]$IsDestructive } } else { [ordered]@{ title = $Endpoint; readOnlyHint = $true } }
+                        _write      = [bool]$IsWrite
                         _category   = $Category
                         _method     = $Method.ToUpper()
                         _summary    = $Summary
@@ -169,6 +177,15 @@ function Get-CippMcpToolCatalog {
     }
 
     $Filtered = @($script:CippMcpToolCatalogCache)
+
+    # Write tools are hidden unless this connection opted in; a call with no $Request (the core passthroughs) is always read-only.
+    $WriteMode = Get-CippMcpWriteMode -Request $Request
+    $Filtered = switch ($WriteMode) {
+        'only' { @($Filtered | Where-Object { $_._write }) }
+        'on' { $Filtered }
+        default { @($Filtered | Where-Object { -not $_._write }) }
+    }
+    $Filtered = @($Filtered)
 
     # Per-connection filtering from the connector URL's query string.
     $Query = $Request.Query

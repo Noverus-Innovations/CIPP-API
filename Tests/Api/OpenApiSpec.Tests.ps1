@@ -261,7 +261,7 @@ Describe 'the real spec through the real projection' {
         $BackendRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
         $McpRoot = Join-Path $BackendRoot 'Modules/CIPPCore/Public/MCP'
         foreach ($Leaf in 'Resolve-CippMcpRef.ps1', 'Resolve-CippMcpNode.ps1', 'Get-CippMcpDescription.ps1',
-            'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpToolCatalog.ps1', 'Get-CippMcpToolList.ps1') {
+            'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpWriteMode.ps1', 'Get-CippMcpToolCatalog.ps1', 'Get-CippMcpToolList.ps1') {
             . (Join-Path $McpRoot $Leaf)
         }
         function Get-CippMcpSpec { return $script:Spec }

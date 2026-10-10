@@ -13,7 +13,7 @@ BeforeAll {
     # fixed five-tool gateway that sits in front of it.
     $McpRoot = Join-Path $BackendRoot 'Modules/CIPPCore/Public/MCP'
     if (-not (Test-Path $McpRoot)) { throw "Could not locate the MCP module at $McpRoot" }
-    foreach ($Leaf in 'Resolve-CippMcpRef.ps1', 'Resolve-CippMcpNode.ps1', 'Get-CippMcpDescription.ps1', 'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpToolCatalog.ps1') {
+    foreach ($Leaf in 'Resolve-CippMcpRef.ps1', 'Resolve-CippMcpNode.ps1', 'Get-CippMcpDescription.ps1', 'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpWriteMode.ps1', 'Get-CippMcpToolCatalog.ps1') {
         . (Join-Path $McpRoot $Leaf)
     }
 
@@ -362,5 +362,68 @@ Describe 'tool identity' {
         $Tools.Count | Should -Be 1
         # the POST also lists the query parameters, so it is the one kept
         $Tools[0]._method | Should -Be 'POST'
+    }
+}
+
+# Write mode: the Noverus fork can project write tools for a SEPARATE connector. Two switches must both be on
+# (deployment env CIPP_MCP_ALLOW_WRITE=true and the connector query ?write=true|only); everything else stays read-only.
+Describe 'write mode' {
+    BeforeAll {
+        function Initialize-WriteFixture {
+            Initialize-FixtureSpec -Paths @{
+                '/api/ListUsers'    = @{ get = (Get-OperationFixture -Role 'Identity.User.Read') }
+                '/api/ExecThing'    = @{ post = (Get-OperationFixture -Role 'Identity.User.ReadWrite') }
+                '/api/RemoveUser'   = @{ post = (Get-OperationFixture -Role 'Identity.User.Read') }
+                '/api/AddThing'     = @{ post = (Get-OperationFixture -Role 'Identity.User.ReadWrite') }
+            }
+        }
+    }
+    AfterEach { $env:CIPP_MCP_ALLOW_WRITE = $null }
+
+    It 'stays read-only with no write query, even when the deployment allows writes' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        (Get-ToolList).name | Should -Be 'ListUsers'
+    }
+
+    It 'ignores ?write=true when the deployment has not allowed writes' {
+        Initialize-WriteFixture
+        (Get-ToolList -Query @{ write = 'true' }).name | Should -Be 'ListUsers'
+    }
+
+    It 'returns read and write tools for ?write=true when both switches are on' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        (Get-ToolList -Query @{ write = 'true' }).name | Sort-Object | Should -Be @('AddThing', 'ExecThing', 'ListUsers', 'RemoveUser')
+    }
+
+    It 'returns only write tools for ?write=only' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        (Get-ToolList -Query @{ write = 'only' }).name | Sort-Object | Should -Be @('AddThing', 'ExecThing', 'RemoveUser')
+    }
+
+    It 'treats an unrecognised or negative write value as off' -ForEach @('false', '0', 'maybe', '') {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        (Get-ToolList -Query @{ write = $_ }).name | Should -Be 'ListUsers'
+    }
+
+    It 'marks write tools not read-only and flags destructive verbs' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        $Tools = Get-ToolList -Query @{ write = 'only' }
+        $Remove = $Tools | Where-Object name -eq 'RemoveUser'
+        $Add = $Tools | Where-Object name -eq 'AddThing'
+        $Remove.annotations.readOnlyHint | Should -BeFalse
+        $Remove.annotations.destructiveHint | Should -BeTrue
+        $Add.annotations.readOnlyHint | Should -BeFalse
+        $Add.annotations.destructiveHint | Should -BeFalse
+    }
+
+    It 'never lets a call without a request see write tools' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        @(Get-CippMcpToolCatalog -Force -InformationAction SilentlyContinue).name | Should -Be 'ListUsers'
     }
 }
