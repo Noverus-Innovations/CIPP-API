@@ -16,7 +16,7 @@ BeforeAll {
     $McpRoot = Join-Path $BackendRoot 'Modules/CIPPCore/Public/MCP'
     foreach ($Leaf in 'Resolve-CippMcpRef.ps1', 'Resolve-CippMcpNode.ps1', 'Get-CippMcpDescription.ps1',
         'Get-CippMcpSafePropertyName.ps1', 'Get-CippMcpWriteMode.ps1', 'Get-CippMcpToolCatalog.ps1', 'Get-CippMcpToolList.ps1',
-        'ConvertTo-CippMcpHashtable.ps1', 'Find-CippMcpTool.ps1', 'Invoke-CippMcpApiRequest.ps1') {
+        'ConvertTo-CippMcpHashtable.ps1', 'Find-CippMcpTool.ps1', 'Invoke-CippMcpApiRequest.ps1', 'Get-CippMcpToolResult.ps1') {
         . (Join-Path $McpRoot $Leaf)
     }
 
@@ -202,5 +202,18 @@ Describe 'gateway in write mode' {
         $On = Get-ListNames -Query @{ write = 'true' } | Where-Object name -eq 'ExecTool'
         $On.annotations.readOnlyHint | Should -BeFalse
         $On.description | Should -Match 'read and write'
+    }
+
+    It 'ExecTool, GetToolInfo and a direct call all refuse a write tool on a read-only connection' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-FixtureSpec -Paths @{
+            '/api/ListThing'  = @{ get = (New-ParamOperation -Names 'x') }
+            '/api/RemoveUser' = @{ post = (New-ParamOperation -Names 'x') }
+        }
+        $Req = [pscustomobject]@{ Query = @{}; Headers = @{} }
+        Mock Invoke-CippMcpApiRequest { throw 'must not dispatch a write tool' }
+        (Get-CippMcpToolResult -Request $Req -ToolName ExecTool -Arguments @{ name = 'RemoveUser' }).isError | Should -BeTrue
+        { Get-CippMcpToolResult -Request $Req -ToolName RemoveUser -Arguments @{} } | Should -Throw '*Unknown or unavailable*'
+        ((Get-CippMcpToolResult -Request $Req -ToolName GetToolInfo -Arguments @{ names = @('RemoveUser') }).content[0].text) | Should -Match 'Unknown tool'
     }
 }

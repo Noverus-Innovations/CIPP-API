@@ -426,4 +426,13 @@ Describe 'write mode' {
         Initialize-WriteFixture
         @(Get-CippMcpToolCatalog -Force -InformationAction SilentlyContinue).name | Should -Be 'ListUsers'
     }
+
+    It 'does not let a write connection warm a cache that a read-only connection then sees' {
+        $env:CIPP_MCP_ALLOW_WRITE = 'true'
+        Initialize-WriteFixture
+        $null = Get-CippMcpToolCatalog -Request ([pscustomobject]@{ Query = @{ write = 'true' } }) -Force -InformationAction SilentlyContinue
+        # no -Force from here on: the second and third calls read the cache the first one filled
+        @(Get-CippMcpToolCatalog -Request ([pscustomobject]@{ Query = @{} })).name | Should -Be 'ListUsers'
+        @(Get-CippMcpToolCatalog).name | Should -Be 'ListUsers'
+    }
 }
